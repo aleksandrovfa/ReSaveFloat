@@ -5,6 +5,7 @@ using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -21,6 +22,7 @@ namespace ReSaveFloat
         private UIApplication uiApp;
         private Application app;
 
+        private UIDocument doc;
         private Document docForClose = null;
         //private UIDocument uiDoc;
         string directoryFOP = "C:\\Users\\fedor.aleksandrov\\Downloads\\AE_общие параметры.txt";
@@ -31,65 +33,84 @@ namespace ReSaveFloat
 
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
-            OpenFileDialog dialog = new OpenFileDialog();
-            //dialog.InitialDirectory = folder;
-            dialog.Multiselect = false;
-            dialog.Filter = "txt files (*.txt)|*.txt|All files (*.*)|*.*";
-            DialogResult dresult = dialog.ShowDialog();
-            if (dresult != DialogResult.OK)
+            try
             {
-                DialogResult result = MessageBox.Show("Не выбран файлик с адреса. Продолжить со стандарными адресами?", "Проблемка!", MessageBoxButtons.OKCancel);
-                if (result != DialogResult.OK)
+                OpenFileDialog dialog = new OpenFileDialog();
+                //dialog.InitialDirectory = folder;
+                dialog.Multiselect = false;
+                dialog.Filter = "txt files (*.txt)|*.txt|All files (*.*)|*.*";
+                DialogResult dresult = dialog.ShowDialog();
+                if (dresult != DialogResult.OK)
                 {
-                    return Result.Cancelled;
+                    DialogResult result = MessageBox.Show("Не выбран файлик с адреса. Продолжить со стандарными адресами?", "Проблемка!", MessageBoxButtons.OKCancel);
+                    if (result != DialogResult.OK)
+                    {
+                        return Result.Cancelled;
+                    }
                 }
+                else if (dresult == DialogResult.OK)
+                {
+                    string filePath = dialog.FileName;
+
+                    string text = System.IO.File.ReadAllText(filePath);
+                    List<string> textArr = text.Split('\n').ToList();
+                    textArr = textArr.Select(t => t.Replace("\r", String.Empty)).ToList();
+
+                    directoryFOP = textArr[0];
+                    directory = textArr[1];
+                    directorySave = textArr[2];
+                }
+
+
+                Debug.Listeners.Clear();
+                Debug.Listeners.Add(new RbsLogger.Logger("ReSaveFloat"));
+                Debug.WriteLine(directoryFOP);
+                Debug.WriteLine(directory);
+                Debug.WriteLine(directorySave);
+
+                var allFiles = Directory.GetFiles(directory);
+
+                var firstFiles = allFiles.Take(2).ToList();
+
+                List<ModelPath> modelPaths = new List<ModelPath>();
+                foreach (var file in firstFiles)
+                {
+                    modelPaths.Add(ModelPathUtils.ConvertUserVisiblePathToModelPath(file));
+                }
+
+                uiApp = commandData.Application;
+                //uiDoc = uiApp.ActiveUIDocument;
+
+                app = uiApp.Application;
+                app.SharedParametersFilename = directoryFOP;
+                app.FailuresProcessing += DoFailureProcessing;
+
+                int count = 0;
+                foreach (var modelPath in modelPaths)
+                {
+
+                    doc = OpenFiles(modelPath);
+
+                    Debug.WriteLine(doc.Document.PathName);
+                    //UIDocument doc = uiApp.ActiveUIDocument;
+                    Transaction tr = new Transaction(doc.Document, "Добавление параметра");
+                    tr.Start();
+                    AddParameter(doc);
+                    RecParameter(doc);
+                    tr.Commit();
+                    SaveAndClose(doc);
+
+                }
+
             }
-            else if (dresult == DialogResult.OK)
+            catch (Exception e)
             {
-                string filePath = dialog.FileName;
-
-                string text = System.IO.File.ReadAllText(filePath);
-                List<string> textArr = text.Split('\n').ToList();
-                textArr = textArr.Select(t => t.Replace("\r", String.Empty)).ToList();
-
-                directoryFOP = textArr[0];
-                directory = textArr[1];
-                directorySave = textArr[2];
+                Debug.WriteLine(e.ToString());
+                MessageBox.Show(e.Message + e.StackTrace, "Что то поломалось... Скоро починим");
+                return Result.Failed;
             }
 
 
-            var allFiles = Directory.GetFiles(directory);
-
-            var firstFiles = allFiles.Take(10).ToList();
-
-            List<ModelPath> modelPaths = new List<ModelPath>();
-            foreach (var file in firstFiles)
-            {
-                modelPaths.Add(ModelPathUtils.ConvertUserVisiblePathToModelPath(file));
-            }
-
-            uiApp = commandData.Application;
-            //uiDoc = uiApp.ActiveUIDocument;
-
-            app = uiApp.Application;
-            app.SharedParametersFilename = directoryFOP;
-            app.FailuresProcessing += DoFailureProcessing;
-
-            int count = 0;
-            foreach (var modelPath in modelPaths)
-            {
-
-                UIDocument doc = OpenFiles(modelPath);
-
-                //UIDocument doc = uiApp.ActiveUIDocument;
-                Transaction tr = new Transaction(doc.Document, "Добавление параметра");
-                tr.Start();
-                AddParameter(doc);
-                RecParameter(doc);
-                tr.Commit();
-                SaveAndClose(doc);
-
-            }
 
 
             return Result.Succeeded;
@@ -135,7 +156,32 @@ namespace ReSaveFloat
                 .FirstOrDefault(x => x.Symbol.FamilyName.Contains("Стальная"));
 
             door.LookupParameter("AE_Комментарий").Set("коридор");
-            door.Host.LookupParameter("AE_Комментарий").Set("коридор");
+            Element wallHost = door.Host;
+            wallHost.LookupParameter("AE_Комментарий").Set("коридор");
+
+
+            //List<Element> wallsToJoin = JoinGeometryUtils.GetJoinedElements(doc, wallHost)
+            //    .Select(x => doc.GetElement(x))
+            //    .Where(x => x.Name.Contains("Бетон"))
+            //    .ToList();  
+
+            //ElementArray elementArray = new ElementArray();
+
+            List<Wall> listWall0 = ((wallHost as Wall).Location as LocationCurve)
+                .get_ElementsAtJoin(0)
+                .Cast<Wall>()
+                .Where(x => x.Name.Contains("Бетон"))
+                .ToList();
+
+            List<Wall> listWall1 = ((wallHost as Wall).Location as LocationCurve)
+                .get_ElementsAtJoin(1)
+                .Cast<Wall>()
+                .Where(x => x.Name.Contains("Бетон"))
+                .ToList();
+
+            listWall0.ForEach(x => x.LookupParameter("AE_Комментарий").Set("коридор"));
+            listWall1.ForEach(x => x.LookupParameter("AE_Комментарий").Set("коридор"));
+
 
             List<Wall> wallsFront = new FilteredElementCollector(doc)
                 .WhereElementIsNotElementType()
@@ -144,6 +190,7 @@ namespace ReSaveFloat
                 .Where(x => x.Name.Contains("Бетон"))  //КР_200_Бетон
                 .Where(x => x.LookupParameter("AE_Комментарий").AsString() != "коридор")
                 .ToList();
+
 
             wallsFront.ForEach(x => x.LookupParameter("AE_Комментарий").Set("фасад"));
 
@@ -177,6 +224,16 @@ namespace ReSaveFloat
 
             wallsInsideFlat.ForEach(x => x.LookupParameter("AE_Комментарий").Set("межкомнатные"));
 
+            List<Wall> wallsBetweenFlatandBalcony = new FilteredElementCollector(doc)
+               .WhereElementIsNotElementType()
+               .OfCategory(BuiltInCategory.OST_Walls)
+               .Cast<Wall>()
+               .Where(x => x.Name.Contains("Газобетон"))  //В_200_Газобетон
+               .Where(x => x.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH).AsDouble()*304.8 > 1095)
+               .Where(x => x.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH).AsDouble() * 304.8 < 1600)
+               .ToList();
+
+            wallsBetweenFlatandBalcony.ForEach(x => x.LookupParameter("AE_Комментарий").Set("фасад"));
 
 
         }
@@ -218,9 +275,22 @@ namespace ReSaveFloat
                 if (failure.GetFailureDefinitionId() == BuiltInFailures.GroupFailures.AtomViolationWhenOnePlaceInstance)
                 {
                     fa.DeleteWarning(failure);
+                    Debug.WriteLine("Ошибка группы");
+                    Debug.WriteLine(failure.GetDescriptionText());
+                }
+                else if (failure.GetFailureDefinitionId() == BuiltInFailures.GeneralFailures.ErrorInSymbolFamilyResolved)
+                {
+                    fa.DeleteWarning(failure);
+                    Debug.WriteLine("Ошибка семейства");
+                    Debug.WriteLine(failure.GetDescriptionText());
+                }
+                else
+                {
+                    fa.DeleteWarning(failure);
+                    Debug.WriteLine("ОШИБКА НИЖЕ НЕ ОБРАБОТАНА");
+                    Debug.WriteLine(failure.GetDescriptionText());
                 }
             }
-
             args.SetProcessingResult(FailureProcessingResult.Continue);
         }
 
