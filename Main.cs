@@ -30,6 +30,8 @@ namespace ReSaveFloat
         string directory = "C:\\Users\\fedor.aleksandrov\\Downloads\\Rvt_2";
 
         string directorySave = "C:\\Users\\fedor.aleksandrov\\Downloads\\OneDrive_1_17.08.2022\\SaveModel2\\";
+        int modelsCount = 3;
+        bool modelsCountAll = false; 
 
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
@@ -59,6 +61,11 @@ namespace ReSaveFloat
                     directoryFOP = textArr[0];
                     directory = textArr[1];
                     directorySave = textArr[2];
+                    modelsCountAll = (textArr[3] == "all");
+                    if (!modelsCountAll)
+                    {
+                        modelsCount = Convert.ToInt32(textArr[3]);
+                    }
                 }
 
 
@@ -70,12 +77,32 @@ namespace ReSaveFloat
 
                 var allFiles = Directory.GetFiles(directory);
 
-                var firstFiles = allFiles.Take(2).ToList();
+                Debug.WriteLine("Всего моделей:" + allFiles.Count());
+                if (modelsCountAll)
+                {
+                    Debug.WriteLine("Будут выгружены все модели");
+                }
+                else
+                {
+                    Debug.WriteLine($"Будет выгружены {modelsCount} модели");
+                }
 
                 List<ModelPath> modelPaths = new List<ModelPath>();
-                foreach (var file in firstFiles)
+                int countModelsNow = 0;
+                foreach (var file in allFiles)
                 {
-                    modelPaths.Add(ModelPathUtils.ConvertUserVisiblePathToModelPath(file));
+                    if (modelsCountAll)
+                    {
+                        modelPaths.Add(ModelPathUtils.ConvertUserVisiblePathToModelPath(file));
+                    }
+                    else
+                    {
+                        if(countModelsNow < modelsCount)
+                        {
+                            modelPaths.Add(ModelPathUtils.ConvertUserVisiblePathToModelPath(file));
+                            countModelsNow++;
+                        }
+                    }
                 }
 
                 uiApp = commandData.Application;
@@ -99,9 +126,12 @@ namespace ReSaveFloat
                     RecParameter(doc);
                     tr.Commit();
                     SaveAndClose(doc);
+                    count++;
+                    Debug.WriteLine(count.ToString());
 
                 }
-
+                Debug.WriteLine("Конец");
+                MessageBox.Show("Пересохранение закончилось. \n Надеюсь что всё прошло удачно))))", "Конец");
             }
             catch (Exception e)
             {
