@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+	<AddIn Type="Command">
+		<Name>ReSaveFamily</Name>
+		<Assembly>"ReSaveFamily.dll"</Assembly>
+		<AddInId>7109957F-659B-44D1-8D6D-0276B68C7B11</AddInId>
+		<FullClassName>ReSaveFamily.Main</FullClassName>
+		<VendorId>AleksandrovFedor</VendorId>
+		<Text>Скрипт для семейств</Text>
+	</AddIn>
+</RevitAddIns>

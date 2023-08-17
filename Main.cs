@@ -14,7 +14,7 @@ using System.Windows.Forms;
 using Application = Autodesk.Revit.ApplicationServices.Application;
 using Binding = Autodesk.Revit.DB.Binding;
 
-namespace ReSaveFloat
+namespace ReSaveFamily
 {
     [Transaction(TransactionMode.Manual)]
     public class Main : IExternalCommand
@@ -25,13 +25,13 @@ namespace ReSaveFloat
         private UIDocument doc;
         private Document docForClose = null;
         //private UIDocument uiDoc;
-        string directoryFOP = "C:\\Users\\fedor.aleksandrov\\Downloads\\AE_общие параметры.txt";
+        //string directoryFOP = "C:\\Users\\fedor.aleksandrov\\Downloads\\AE_общие параметры.txt";
 
-        string directory = "C:\\Users\\fedor.aleksandrov\\Downloads\\Rvt_2";
+        string directory = @"C:\Users\fedor.aleksandrov\Desktop\пересохранение семейств\Исходные\";
 
-        string directorySave = "C:\\Users\\fedor.aleksandrov\\Downloads\\OneDrive_1_17.08.2022\\SaveModel2\\";
-        int modelsCount = 3;
-        bool modelsCountAll = false; 
+        string directorySave = @"C:\Users\fedor.aleksandrov\Desktop\пересохранение семейств\Пересохраненные\";
+        int modelsCount = 8;
+        bool modelsCountAll = true; 
 
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
@@ -58,24 +58,23 @@ namespace ReSaveFloat
                     List<string> textArr = text.Split('\n').ToList();
                     textArr = textArr.Select(t => t.Replace("\r", String.Empty)).ToList();
 
-                    directoryFOP = textArr[0];
-                    directory = textArr[1];
-                    directorySave = textArr[2];
-                    modelsCountAll = (textArr[3] == "all");
+                    //directoryFOP = textArr[0];
+                    directory = textArr[0];
+                    directorySave = textArr[1];
+                    modelsCountAll = (textArr[2] == "all");
                     if (!modelsCountAll)
                     {
-                        modelsCount = Convert.ToInt32(textArr[3]);
+                        modelsCount = Convert.ToInt32(textArr[2]);
                     }
                 }
 
 
                 Debug.Listeners.Clear();
-                Debug.Listeners.Add(new RbsLogger.Logger("ReSaveFloat"));
-                Debug.WriteLine(directoryFOP);
+                Debug.Listeners.Add(new RbsLogger.Logger("ReSaveFamily"));
                 Debug.WriteLine(directory);
                 Debug.WriteLine(directorySave);
 
-                var allFiles = Directory.GetFiles(directory);
+                var allFiles = Directory.GetFiles(directory, "*.rfa", SearchOption.AllDirectories);
 
                 Debug.WriteLine("Всего моделей:" + allFiles.Count());
                 if (modelsCountAll)
@@ -109,25 +108,41 @@ namespace ReSaveFloat
                 //uiDoc = uiApp.ActiveUIDocument;
 
                 app = uiApp.Application;
-                app.SharedParametersFilename = directoryFOP;
-                app.FailuresProcessing += DoFailureProcessing;
+                //app.SharedParametersFilename = directoryFOP;
+                //app.FailuresProcessing += DoFailureProcessing;
 
                 int count = 0;
                 foreach (var modelPath in modelPaths)
                 {
-
-                    doc = OpenFiles(modelPath);
-
-                    Debug.WriteLine(doc.Document.PathName);
-                    //UIDocument doc = uiApp.ActiveUIDocument;
-                    Transaction tr = new Transaction(doc.Document, "Добавление параметра");
-                    tr.Start();
-                    AddParameter(doc);
-                    RecParameter(doc);
-                    tr.Commit();
-                    SaveAndClose(doc);
+                    Debug.WriteLine("");
                     count++;
-                    Debug.WriteLine(count.ToString());
+                    Debug.WriteLine($"ПОРЯДКОВЫЙ НОМЕР СЕМЕЙСТВА: {count.ToString()}");
+                    Debug.WriteLine(ModelPathUtils.ConvertModelPathToUserVisiblePath(modelPath));
+                    try
+                    {
+                        doc = OpenFiles(modelPath);
+                        Debug.WriteLine("!!!МАТЕРИАЛЫ ДО УДАЛЕНИЯ:");
+                        WriteMaterials(doc);
+
+
+                        Transaction tr = new Transaction(doc.Document, "Удаление материалов");
+                        tr.Start();
+                        DeleteMaterials(doc);
+                        tr.Commit();
+
+                        Debug.WriteLine("!!!МАТЕРИАЛЫ ПОСЛЕ УДАЛЕНИЯ:");
+                        WriteMaterials(doc);
+
+                        SaveAndClose(doc);
+                        
+                    }
+                    catch (Exception ex)
+                    {
+
+                        Debug.WriteLine(ex.ToString());
+                    }
+
+                   
 
                 }
                 Debug.WriteLine("Конец");
@@ -146,128 +161,79 @@ namespace ReSaveFloat
             return Result.Succeeded;
         }
 
+        private void WriteMaterials(UIDocument doc)
+        {
+            List<Material> materials = new FilteredElementCollector(doc.Document)
+                .OfClass(typeof(Material))
+                .Cast<Material>()
+                .ToList();
+
+            foreach (var material in materials)
+            {
+                Debug.WriteLine(material.Name);
+            }
+           
+        }
+
+        private void DeleteMaterials(UIDocument doc)
+        {
+            
+            List<Material> materials = new FilteredElementCollector(doc.Document)
+                .OfClass(typeof(Material))
+                .Cast<Material>()
+                .ToList();
+
+
+            List<ElementId> listIdMaterial = new List<ElementId>();
+
+            List<FamilyParameter> familyParameters = doc.Document.FamilyManager.GetParameters()
+                .Where(x => x.StorageType == StorageType.ElementId)
+                .ToList();
+
+            foreach (var fmparem in familyParameters)
+            {
+                foreach (Parameter param in fmparem.AssociatedParameters)
+                {
+                    listIdMaterial.Add(param.AsElementId());
+                }
+                
+            }
+
+            var listIdMaterialDistinct = listIdMaterial.Distinct().ToList();
+            
+            materials = materials
+                .Where(x =>!listIdMaterialDistinct.Contains(x.Id))
+                .Where(x =>!x.Name.StartsWith("ETL_")).ToList();
+
+            doc.Document.Delete(materials.Select(x => x.Id).ToList());
+
+            
+
+
+        }
+
         private void SaveAndClose(UIDocument uiDoc)
         {
             Directory.CreateDirectory(directorySave);
             Document doc = uiDoc.Document;
-            doc.SaveAs(directorySave + doc.Title + ".rvt");
+            string pathSource = doc.PathName;
+            string path = pathSource.Replace(directory, directorySave);
+            string pathWithoutName = path.Replace($@"\{doc.Title}.rfa", "");
+            if (!Directory.Exists(pathWithoutName))
+            {
+                Directory.CreateDirectory(pathWithoutName);
+            }
+
+            SaveAsOptions options = new SaveAsOptions();
+            options.OverwriteExistingFile = true;
+            
+            doc.SaveAs(path, options);
             //doc.Close();
 
             docForClose = doc;
             //RevitCommandId closeDoc = RevitCommandId.LookupPostableCommandId(PostableCommand.Close);
             //uiApp.PostCommand(closeDoc);
         }
-
-        private void AddParameter(UIDocument uiDoc)
-        {
-            CategorySet categorySet = new CategorySet();
-            categorySet.Insert(uiDoc.Document.Settings.Categories.get_Item(BuiltInCategory.OST_Doors));
-            categorySet.Insert(uiDoc.Document.Settings.Categories.get_Item(BuiltInCategory.OST_Walls));
-
-            DefinitionFile definitionFile = app.OpenSharedParameterFile();
-            Definition definition = definitionFile.Groups
-                .SelectMany(group => group.Definitions)
-                .FirstOrDefault(x => x.Name.Equals("AE_Комментарий"));
-
-            Binding binding = app.Create.NewInstanceBinding(categorySet);
-
-            BindingMap map = uiDoc.Document.ParameterBindings;
-            map.Insert(definition, binding, BuiltInParameterGroup.PG_TEXT);
-
-        }
-
-        private void RecParameter(UIDocument uiDoc)
-        {
-            Document doc = uiDoc.Document;
-            FamilyInstance door = new FilteredElementCollector(doc)
-                .WhereElementIsNotElementType()
-                .OfCategory(BuiltInCategory.OST_Doors)
-                .Cast<FamilyInstance>()
-                .FirstOrDefault(x => x.Symbol.FamilyName.Contains("Стальная"));
-
-            door.LookupParameter("AE_Комментарий").Set("коридор");
-            Element wallHost = door.Host;
-            wallHost.LookupParameter("AE_Комментарий").Set("коридор");
-
-
-            //List<Element> wallsToJoin = JoinGeometryUtils.GetJoinedElements(doc, wallHost)
-            //    .Select(x => doc.GetElement(x))
-            //    .Where(x => x.Name.Contains("Бетон"))
-            //    .ToList();  
-
-            //ElementArray elementArray = new ElementArray();
-
-            List<Wall> listWall0 = ((wallHost as Wall).Location as LocationCurve)
-                .get_ElementsAtJoin(0)
-                .Cast<Wall>()
-                .Where(x => x.Name.Contains("Бетон"))
-                .ToList();
-
-            List<Wall> listWall1 = ((wallHost as Wall).Location as LocationCurve)
-                .get_ElementsAtJoin(1)
-                .Cast<Wall>()
-                .Where(x => x.Name.Contains("Бетон"))
-                .ToList();
-
-            listWall0.ForEach(x => x.LookupParameter("AE_Комментарий").Set("коридор"));
-            listWall1.ForEach(x => x.LookupParameter("AE_Комментарий").Set("коридор"));
-
-
-            List<Wall> wallsFront = new FilteredElementCollector(doc)
-                .WhereElementIsNotElementType()
-                .OfCategory(BuiltInCategory.OST_Walls)
-                .Cast<Wall>()
-                .Where(x => x.Name.Contains("Бетон"))  //КР_200_Бетон
-                .Where(x => x.LookupParameter("AE_Комментарий").AsString() != "коридор")
-                .ToList();
-
-
-            wallsFront.ForEach(x => x.LookupParameter("AE_Комментарий").Set("фасад"));
-
-            List<Wall> wallsFront2 = new FilteredElementCollector(doc)
-                .WhereElementIsNotElementType()
-                .OfCategory(BuiltInCategory.OST_Walls)
-                .Cast<Wall>()
-                .Where(x => x.Name.Contains("Штукатурка"))  //НО_Х_155_Штукатурка_темно - серая + 150 утеплитель
-                .ToList();
-
-            wallsFront2.ForEach(x => x.LookupParameter("AE_Комментарий").Set("фасад"));
-
-
-            List<Wall> wallsBetweenFlat = new FilteredElementCollector(doc)
-               .WhereElementIsNotElementType()
-               .OfCategory(BuiltInCategory.OST_Walls)
-               .Cast<Wall>()
-               .Where(x => x.Name.Contains("Газобетон"))  //В_200_Газобетон
-               .ToList();
-
-            wallsBetweenFlat.ForEach(x => x.LookupParameter("AE_Комментарий").Set("межквартирные"));
-
-
-            List<Wall> wallsInsideFlat = new FilteredElementCollector(doc)
-               .WhereElementIsNotElementType()
-               .OfCategory(BuiltInCategory.OST_Walls)
-               .Cast<Wall>()
-               .Where(x => x.Name.Contains("ПлитыПГП"))  //В_80_ПлитыПГП_Полнотелые_Обычные
-               .ToList();
-
-
-            wallsInsideFlat.ForEach(x => x.LookupParameter("AE_Комментарий").Set("межкомнатные"));
-
-            List<Wall> wallsBetweenFlatandBalcony = new FilteredElementCollector(doc)
-               .WhereElementIsNotElementType()
-               .OfCategory(BuiltInCategory.OST_Walls)
-               .Cast<Wall>()
-               .Where(x => x.Name.Contains("Газобетон"))  //В_200_Газобетон
-               .Where(x => x.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH).AsDouble()*304.8 > 1095)
-               .Where(x => x.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH).AsDouble() * 304.8 < 1600)
-               .ToList();
-
-            wallsBetweenFlatandBalcony.ForEach(x => x.LookupParameter("AE_Комментарий").Set("фасад"));
-
-
-        }
-
         private UIDocument OpenFiles(ModelPath modelPath)
         {
             OpenOptions openOptions = new OpenOptions();
@@ -338,8 +304,8 @@ namespace ReSaveFloat
                     return OpenConflictResult.DiscardLocalChangesAndOpenLatestVersion;
                 case OpenConflictScenario.OutOfDate:
                     return OpenConflictResult.DiscardLocalChangesAndOpenLatestVersion;
-                case OpenConflictScenario.VersionArchived:
-                    return OpenConflictResult.DiscardLocalChangesAndOpenLatestVersion;
+                //case OpenConflictScenario.VersionArchived:
+                //    return OpenConflictResult.DiscardLocalChangesAndOpenLatestVersion;
                 default:
                     return OpenConflictResult.DiscardLocalChangesAndOpenLatestVersion;
             }
